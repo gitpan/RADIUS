@@ -192,3 +192,21 @@ VALUE		Framed-Compression	Van-Jacobsen-TCP-IP	1
 
 #VALUE		Server-Config		Password-Expiration	30
 #VALUE		Server-Config		Password-Warning	5
+
+##
+## VENDOR SPECIFIC ATTRIBUTES
+##
+## The following entries demonstrate the use of VSAs
+##
+
+# cisco-avpair is used for various functions by cisco IOS. Most
+# notably, it's used to create VPDN tunnels.
+#
+VENDORATTR	9	cisco-avpair	1	string
+
+# This is a fake attribute to demonstrate how to write named-value
+# attributes.
+VENDORATTR	1	ibm-enum	254	integer
+VENDORVALUE	1	ibm-enum	value-1	1
+VENDORVALUE	1	ibm-enum	value-2	2
+VENDORVALUE	1	ibm-enum	value-3	3

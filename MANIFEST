@@ -1,9 +1,10 @@
 Changes
 MANIFEST
-README
 Makefile.PL
 RADIUS/Dictionary.pm
 RADIUS/Packet.pm
+README
+README.VSA
 dictionary
 example-menu.pl
 example-unix.pl

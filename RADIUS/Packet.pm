@@ -2,14 +2,17 @@ package RADIUS::Packet;
 
 use strict;
 require Exporter;
-use vars qw($VERSION @ISA @EXPORT @EXPORT_OK);
+use vars qw($VERSION @ISA @EXPORT @EXPORT_OK $VSA);
 @ISA       = qw(Exporter);
 @EXPORT    = qw(auth_resp);
 @EXPORT_OK = qw( );
 
-$VERSION = '1.0';
+$VERSION = 1.1;
 
-use RADIUS::Dictionary;
+$VSA = 26;			# Type assigned in RFC2138 to the 
+				# Vendor-Specific Attributes
+
+use RADIUS::Dictionary 1.1;	# Be shure our dictionaries are current
 use Socket;
 use MD5;
 
@@ -37,9 +40,14 @@ sub set_code          { $_[0]->{Code} = $_[1];          }
 sub set_identifier    { $_[0]->{Identifier} = $_[1];    }
 sub set_authenticator { $_[0]->{Authenticator} = $_[1]; }
 
-sub attributes { keys %{$_[0]->{Attributes}}; }
-sub attr     { $_[0]->{Attributes}->{$_[1]}; }
+sub attributes { keys %{$_[0]->{Attributes}};        }
+sub attr     { $_[0]->{Attributes}->{$_[1]};         }
 sub set_attr { $_[0]->{Attributes}->{$_[1]} = $_[2]; }
+
+sub vendors      { keys %{$_[0]->{VSAttributes}};                          }
+sub vsattributes { keys %{$_[0]->{VSAttributes}->{$_[1]}};                 }
+sub vsattr       { $_[0]->{VSAttributes}->{$_[1]}->{$_[2]};                }
+sub set_vsattr   { push @{$_[0]->{VSAttributes}->{$_[1]}->{$_[2]}}, $_[3]; }
 
 # Decode the password
 sub password {
@@ -78,91 +86,204 @@ sub dump {
   print "Authentic:  ", pclean(pdef($self->{Authenticator})), "\n";
   print "Attributes:\n";
   foreach my $attr ($self->attributes) {
-    printf "  %-20s %s\n", $attr . ":" , pclean($self->attr($attr));
+    printf "  %-20s %s\n", $attr . ":" , pclean(pdef($self->attr($attr)));
+  }
+  foreach my $vendor ($self->vendors) {
+      print "VSA for vendor ", $vendor, "\n";
+      foreach my $attr ($self->vsattributes($vendor)) {
+	  printf "    %-20s %s\n", $attr . ":" ,
+	  pclean(join("|", @{$self->vsattr($vendor, $attr)}));
+      }
   }
   print "*** END DUMP\n";
 
 }
 
 sub pack {
-  my $self = shift;
-  my $hdrlen = 1 + 1 + 2 + 16;    # Size of packet header
-  my $p_hdr  = "C C n a16 a*";    # Pack template for header
-  my $p_attr = "C C a*";          # Pack template for attribute
-  my %codes  = ('Access-Request'      => 1,  'Access-Accept'      => 2,
-		'Access-Reject'       => 3,  'Accounting-Request' => 4,
-		'Accounting-Response' => 5,  'Access-Challenge'   => 11,
-		'Status-Server'       => 12, 'Status-Client'      => 13);
-  my $attstr = "";                # To hold attribute structure
-  # Define a hash of subroutine references to pack the various data types
-  my %packer = ("string" => sub {
-		  return $_[0];
-		},
-		"integer" => sub {
-#		  return pack "N", $self->{Dict}->{val}->{$_[1]} ?
-		  return pack "N", $self->{Dict}->attr_has_val($_[1]) ?
-		    $self->{Dict}->val_num(@_[1, 0]) : $_[0];
-		},
-		"ipaddr" => sub {
-		  return inet_aton($_[0]);
-		},
-		"time" => sub {
-		  return pack "N", $_[0];
-		});
+    my $self = shift;
+    my $hdrlen = 1 + 1 + 2 + 16;    # Size of packet header
+    my $p_hdr  = "C C n a16 a*";    # Pack template for header
+    my $p_attr = "C C a*";          # Pack template for attribute
+    my $p_vsa  = "C C N C C a*";    # XXX - The spec says that a
+    # 'Vendor-Type' must be included
+    # but there are no documented definitions
+    # for this! We'll simply skip this value
 
-  # Pack the attributes
-  foreach my $attr ($self->attributes) {
-    my $val = &{$packer{$self->{Dict}->attr_type($attr)}}($self->attr($attr),
-			$self->{Dict}->attr_num($attr));
-    $attstr .= pack $p_attr, $self->{Dict}->attr_num($attr), length($val)+2, $val;
+    my %codes  = ('Access-Request'      => 1,  'Access-Accept'      => 2,
+		  'Access-Reject'       => 3,  'Accounting-Request' => 4,
+		  'Accounting-Response' => 5,  'Access-Challenge'   => 11,
+		  'Status-Server'       => 12, 'Status-Client'      => 13);
+    my $attstr = "";                # To hold attribute structure
+    # Define a hash of subroutine references to pack the various data types
+    my %packer = ("string" => sub {
+	return $_[0];
+    },
+		  "integer" => sub {
+		      return pack "N", $self->{Dict}->attr_has_val($_[1]) ?
+			  $self->{Dict}->val_num(@_[1, 0]) : $_[0];
+		  },
+		  "ipaddr" => sub {
+		      return inet_aton($_[0]);
+		  },
+		  "time" => sub {
+		      return pack "N", $_[0];
+		  },
+		  "date" => sub {
+		      return pack "N", $_[0];
+		  });
+
+    my %vsapacker = ("string" => sub {
+	return $_[0];
+    },
+		     "integer" => sub {
+			 return pack "N", 
+			 $self->{Dict}->vsattr_has_val($_[2], $_[1]) ?
+			     $self->{Dict}->vsaval_num(@_[2, 1, 0]) : $_[0];
+		     },
+		     "ipaddr" => sub {
+			 return inet_aton($_[0]);
+		     },
+		     "time" => sub {
+			 return pack "N", $_[0];
+		     },
+		     "date" => sub {
+			 return pack "N", $_[0];
+		     });
+    
+    # Pack the attributes
+    foreach my $attr ($self->attributes) {
+	
+	next unless ref($packer{$self->{Dict}->attr_type($attr)}) eq 'CODE';
+
+	my $val = &{$packer{$self->{Dict}
+			    ->attr_type($attr)}}($self->attr($attr),
+						 $self->{Dict}
+						 ->attr_num($attr));
+	$attstr .= pack $p_attr, $self
+	    ->{Dict}->attr_num($attr), length($val)+2, $val;
+    }
+
+    # Pack the Vendor-Specific Attributes
+
+    foreach my $vendor ($self->vendors) {
+	foreach my $attr ($self->vsattributes($vendor)) {
+	    next unless 
+		ref($vsapacker{$self->{Dict}->vsattr_type($vendor, $attr)}) 
+		    eq 'CODE';
+	    foreach my $datum (@{$self->vsattr($vendor, $attr)}) {
+		my $vval = &{$vsapacker{$self->{'Dict'}
+					->vsattr_type($vendor, $attr)}}
+		($datum, 
+		 $self->{'Dict'}->vsattr_num($vendor, $attr), $vendor);
+		$attstr .= pack $p_vsa, 26, length($vval) + 8, $vendor,
+		$self->{'Dict'}->vsattr_num($vendor, $attr),
+		length($vval) + 2, $vval;
+	    }
+	}
   }
+
   # Prepend the header and return the complete binary packet
   return pack $p_hdr, $codes{$self->code}, $self->identifier,
-                      length($attstr) + $hdrlen, $self->authenticator,
-                      $attstr;
+  length($attstr) + $hdrlen, $self->authenticator,
+  $attstr;
 }
 
 sub unpack {
-  my ($self, $data) = @_;
-  my $dict = $self->{Dict};
-  my $p_hdr  = "C C n a16 a*";    # Pack template for header
-  my $p_attr = "C C a*";          # Pack template for attribute
-  my %rcodes = (1  => 'Access-Request',      2  => 'Access-Accept',
-	        3  => 'Access-Reject',       4  => 'Accounting-Request',
-	        5  => 'Accounting-Response', 11 => 'Access-Challenge',
-		12 => 'Status-Server',       13 => 'Status-Client');
+    my ($self, $data) = @_;
+    my $dict = $self->{Dict};
+    my $p_hdr  = "C C n a16 a*";    # Pack template for header
+    my $p_attr = "C C a*";          # Pack template for attribute
+    my %rcodes = (1  => 'Access-Request',      2  => 'Access-Accept',
+		  3  => 'Access-Reject',       4  => 'Accounting-Request',
+		  5  => 'Accounting-Response', 11 => 'Access-Challenge',
+		  12 => 'Status-Server',       13 => 'Status-Client');
 
-  # Decode the header
-  my ($code, $id, $len, $auth, $attrdat) = unpack $p_hdr, $data;
+    # Decode the header
+    my ($code, $id, $len, $auth, $attrdat) = unpack $p_hdr, $data;
 
-  # Generate a skeleton data structure to be filled in
-  $self->set_code($rcodes{$code});
-  $self->set_identifier($id);
-  $self->set_authenticator($auth);
+    # Generate a skeleton data structure to be filled in
+    $self->set_code($rcodes{$code});
+    $self->set_identifier($id);
+    $self->set_authenticator($auth);
 
-  # Functions for the various data types
-  my %unpacker = ("string" => sub {
-		    return $_[0];
-		  },
-		  "integer" => sub {
-		    return $dict->val_has_name($_[1]) ?
-		      $dict->val_name($_[1], unpack("N", $_[0]))
-			: unpack("N", $_[0]);
-		  },
-		  "ipaddr" => sub {
-		    return inet_ntoa($_[0]);
-		  },
-		  "time" => sub {
-		    return unpack "N", $_[0];
-		  });
+    # Functions for the various data types
+    my %unpacker = 
+	(
+	 "string" => sub {
+	     return $_[0];
+	 },
+	 "integer" => sub {
+	     return $dict->val_has_name($_[1]) ?
+		 $dict->val_name($_[1], 
+				 unpack("N", $_[0]))
+		     : unpack("N", $_[0]);
+	 },
+	 "ipaddr" => sub {
+	     return inet_ntoa($_[0]);
+	 },
+	 "time" => sub {
+	     return unpack "N", $_[0];
+	 },
+	 "date" => sub {
+	     return unpack "N", $_[0];
+	 });
 
-  # Unpack the attributes
-  while (length($attrdat)) {
-    my $length = unpack "x C", $attrdat;
-    my ($type, $value) = unpack "C x a${\($length-2)}", $attrdat;
-    my $val = &{$unpacker{$dict->attr_numtype($type)}}($value, $type);
-    $self->set_attr($dict->attr_name($type), $val);
-    substr($attrdat, 0, $length) = "";
+    my %vsaunpacker = 
+	( "string" => sub {
+	    return $_[0];
+	},
+	  "integer" => sub {
+		  $dict->vsaval_has_name($_[2], $_[1]) 
+		      ? $dict->vsaval_name($_[2], $_[1], unpack("N", $_[0]))
+			  : unpack("N", $_[0]);
+	  },
+	  "ipaddr" => sub {
+	      return inet_ntoa($_[0]);
+	  },
+	  "time" => sub {
+	      return unpack "N", $_[0];
+	  },
+	  "date" => sub {
+	      return unpack "N", $_[0];
+	  });
+    
+
+    # Unpack the attributes
+    while (length($attrdat)) {
+	my $length = unpack "x C", $attrdat;
+	my ($type, $value) = unpack "C x a${\($length-2)}", $attrdat;
+	if ($type == $VSA) {	# Vendor-Specific Attribute
+	    my ($vid, $vtype, $vlength) = unpack "N C C", $value;
+	    # XXX - How do we calculate the length
+	    # of the VSA? It's not defined!
+
+	    my $vvalue = unpack "xxxx x x a${\($vlength-2)}", $value;
+
+	    if (ref $vsaunpacker{$dict->vsattr_numtype($vid, $vtype)} 
+	      ne 'CODE') {
+	      print STDERR 
+		  "Garbled vendor attribute $vid/$vtype for unpack()\n";
+	      substr($attrdat, 0, $length) = ""; # Skip this section
+	      next;
+	  }
+	  my $val = 
+	      &{$vsaunpacker{$dict->vsattr_numtype($vid, $vtype)}}($vvalue, 
+								   $vtype,
+								   $vid);
+	  $self->set_vsattr($vid, 
+			    $dict->vsattr_name($vid, $vtype), 
+			    $val);
+      }
+      else {			# Normal attribute
+	  if (ref ($unpacker{$dict->attr_numtype($type)}) ne 'CODE') {
+	      print STDERR "Garbled attribute $type for unpack()\n";
+	      substr($attrdat, 0, $length) = ""; # Skip this section
+	      next;
+	  }
+	  my $val = &{$unpacker{$dict->attr_numtype($type)}}($value, $type);
+	  $self->set_attr($dict->attr_name($type), $val);
+      }
+      substr($attrdat, 0, $length) = ""; # Skip this section
   }
 }
 
@@ -217,6 +338,19 @@ you to initialize the object.
 =back
 
 =head2 OBJECT METHODS
+
+There are actually two families of object methods. The ones described
+below deal with standard RADIUS attributes. An additional set of methods
+handle the Vendor-Specific attributes as defined in the RADIUS protocol.
+Those methods behave in much the same way as the ones below with the
+exception that the prefix I<vs> must be applied before the I<attr> in most
+of the names. The vendor code must also be included as the first parameter
+of the call.
+
+The I<vsattr> and I<set_vsattr> methods, used to query and set Vendor-Specific
+attributes return an array reference with the values of each instance
+of the particular attribute in the packet. This difference is required
+to support multiple VSAs with different parameters in the same packet.
 
 =over 4
 
@@ -386,6 +520,7 @@ a brief description of the procedure:
 =head1 AUTHOR
 
 Christopher Masto, chris@netmonger.net
+VSA support by Luis E. Munoz, lem@cantv.net
 
 =head1 SEE ALSO
 

@@ -1,5 +1,16 @@
 Revision history for Perl extension RADIUS.
 
+1.10	Sat 23 Jan 19:52:00 VET 1999
+	- VSAs now can appear multiple times in a packet. This changes
+	slightly the interface of the VSAs accessors
+
+1.10	Fri 22 Jan 12:31:00 VET 1999
+	- Added 'date' attribute type. This is used by certain 
+	dictionaries
+	- Garbled packets no longer attempt to call an undef
+	code reference in unpack()
+	- Added some suport for Vendor-Specific attributes
+
 1.00  Fri 22 Aug 09:22:16 EDT 1997
 	- first released version
 
