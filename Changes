@@ -1,5 +1,11 @@
 Revision history for Perl extension RADIUS.
 
+1.20	Tue 09 Nov 17:09:00 VET 1999
+	- Added modifications sent by Ian Smith <iansmith@ncinter.net>
+	to the VSA code. This allows VSAs to be sent and understood
+	properly by the USR/3COM Total Control family. This has not
+	been individually tested.
+
 1.10	Sat 23 Jan 19:52:00 VET 1999
 	- VSAs now can appear multiple times in a packet. This changes
 	slightly the interface of the VSAs accessors

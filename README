@@ -12,6 +12,9 @@ You can also do accounting.. basically just open the radacct port
 instead of radius, and send back an Accounting-Response (no
 attributes) when you've saved the Accounting-Request.
 
+See also the file README.VSA in the distribution for notes about VSA 
+support.
+
 Please contact me if you have any problems or comments with this release.
 
 Christopher Masto

@@ -7,7 +7,7 @@ use vars qw($VERSION @ISA @EXPORT @EXPORT_OK $VSA);
 @EXPORT    = qw(auth_resp);
 @EXPORT_OK = qw( );
 
-$VERSION = 1.1;
+$VERSION = 1.2;
 
 $VSA = 26;			# Type assigned in RFC2138 to the 
 				# Vendor-Specific Attributes
@@ -256,8 +256,18 @@ sub unpack {
 	    my ($vid, $vtype, $vlength) = unpack "N C C", $value;
 	    # XXX - How do we calculate the length
 	    # of the VSA? It's not defined!
+	    # XXX - 3COM seems to do things a bit differently. 
+	    # The IF below takes care of that. This was contributed by 
+	    # Ian Smith. Check the file CHANGES on this distribution for 
+	    # more information.
 
-	    my $vvalue = unpack "xxxx x x a${\($vlength-2)}", $value;
+            my $vvalue;
+            if ($vid == 429) {
+              ($vid, $vtype) = unpack "N N", $value;
+              $vvalue = unpack "xxxx xxxx a${\($length-10)}", $value;
+            } else {
+              $vvalue = unpack "xxxx x x a${\($vlength-2)}", $value;
+            }
 
 	    if (ref $vsaunpacker{$dict->vsattr_numtype($vid, $vtype)} 
 	      ne 'CODE') {
@@ -519,8 +529,9 @@ a brief description of the procedure:
 
 =head1 AUTHOR
 
-Christopher Masto, chris@netmonger.net
-VSA support by Luis E. Munoz, lem@cantv.net
+Christopher Masto, <chris@netmonger.net>. VSA support by Luis E. Munoz,
+<lem@cantv.net>. Fox for unpacking 3COM VSAs contributed by Ian Smith
+<iansmith@ncinter.net>
 
 =head1 SEE ALSO
 
